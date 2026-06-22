@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>MoE Scalper — Candle Signal Engine</title>
+<meta name="theme-color" content="#0A0E12" />
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" href="icons/icon-192.png" />
+<link rel="apple-touch-icon" href="icons/icon-192.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+<style>
+  :root{
+    --bg:#0A0E12; --surface:#11161D; --surface-2:#161D26; --border:#1E2630;
+    --text:#E8EDF2; --text-dim:#6B7785;
+    --buy:#2ED993; --sell:#FF5C72; --hold:#F5B942; --brand:#5B8DEF;
+    --font-display:'Space Grotesk',system-ui,-apple-system,sans-serif;
+    --font-mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; background:var(--bg); color:var(--text); font-family:var(--font-display); -webkit-tap-highlight-color:transparent; }
+  body{ padding-bottom:36px; }
+  ::selection{ background:var(--brand); color:#fff; }
+
+  /* ── Top bar ── */
+  header.topbar{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:13px 16px; border-bottom:1px solid var(--border);
+    position:sticky; top:0; background:rgba(10,14,18,0.93);
+    backdrop-filter:blur(6px); z-index:10;
+  }
+  .brand{ display:flex; align-items:center; gap:8px; font-weight:700; letter-spacing:.02em; font-size:15px; }
+  .dot{ width:9px; height:9px; border-radius:50%; background:var(--text-dim); }
+  .dot.live{ background:var(--buy); animation:pulse 2s infinite; }
+  .dot.down{ background:var(--sell); }
+  @keyframes pulse{
+    0%{box-shadow:0 0 0 0 rgba(46,217,147,.55);}
+    70%{box-shadow:0 0 0 6px rgba(46,217,147,0);}
+    100%{box-shadow:0 0 0 0 rgba(46,217,147,0);}
+  }
+  #installBtn{ display:none; font-family:var(--font-display); font-size:12px; font-weight:600; background:var(--brand); color:#0A0E12; border:none; border-radius:8px; padding:7px 12px; cursor:pointer; }
+
+  /* ── Asset type toggle ── */
+  .type-row{ display:flex; gap:0; padding:10px 16px; border-bottom:1px solid var(--border); }
+  .type-btn{
+    flex:1; padding:8px 0; font-family:var(--font-display); font-size:12px; font-weight:700;
+    letter-spacing:.08em; text-transform:uppercase; border:1px solid var(--border);
+    background:var(--surface); color:var(--text-dim); cursor:pointer; transition:all .15s;
+  }
+  .type-btn:first-child{ border-radius:9px 0 0 9px; }
+  .type-btn:last-child{ border-radius:0 9px 9px 0; border-left:none; }
+  .type-btn.active{ background:var(--brand); color:#0A0E12; border-color:var(--brand); }
+
+  /* ── Controls ── */
+  .controls-row{ display:flex; gap:8px; padding:10px 16px; flex-wrap:wrap; border-bottom:1px solid var(--border); }
+  select,input[type=number]{
+    background:var(--surface); border:1px solid var(--border); color:var(--text);
+    font-family:var(--font-mono); font-size:12.5px; border-radius:7px; padding:7px 9px; outline:none;
+  }
+  select:focus,input:focus{ border-color:var(--brand); }
+  label.field{ display:flex; flex-direction:column; gap:3px; font-size:10.5px; color:var(--text-dim); }
+
+  main{ max-width:720px; margin:0 auto; padding:16px; display:flex; flex-direction:column; gap:14px; }
+
+  /* ── Hero ── */
+  .hero{
+    border-radius:16px; padding:22px 18px; border:1px solid var(--border);
+    background:linear-gradient(180deg,var(--surface),var(--surface-2));
+    position:relative; overflow:hidden;
+  }
+  .hero::before{
+    content:''; position:absolute; inset:0; opacity:.10; pointer-events:none;
+    background:radial-gradient(circle at 85% 0%,var(--sig-color,var(--brand)),transparent 60%);
+  }
+  .hero-top{ display:flex; justify-content:space-between; align-items:baseline; }
+  .hero-label{ font-size:11px; letter-spacing:.12em; color:var(--text-dim); text-transform:uppercase; }
+  .hero-countdown{ font-family:var(--font-mono); font-size:12px; color:var(--text-dim); }
+  .hero-signal{ font-size:54px; font-weight:700; letter-spacing:-.01em; line-height:1; margin:10px 0 4px; color:var(--sig-color,var(--text)); }
+  .hero-sub{ font-family:var(--font-mono); font-size:13px; color:var(--text-dim); }
+  .hero-sub b{ color:var(--text); }
+
+  /* ── Card grid ── */
+  .grid{ display:grid; grid-template-columns:1fr; gap:12px; }
+  @media(min-width:680px){ .grid{ grid-template-columns:1fr 1fr; } }
+  .card{ background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:14px 16px; }
+  .card h3{ margin:0 0 10px; font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--text-dim); font-weight:600; }
+
+  .metric-grid{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; }
+  .metric{ font-family:var(--font-mono); }
+  .metric .k{ font-size:10px; color:var(--text-dim); display:block; }
+  .metric .v{ font-size:14px; }
+
+  /* ── Asset badge ── */
+  .asset-badge{
+    display:inline-flex; align-items:center; gap:5px;
+    font-family:var(--font-mono); font-size:11px; font-weight:600; letter-spacing:.05em;
+    padding:3px 9px; border-radius:20px; margin-left:8px;
+  }
+  .asset-badge.crypto{ background:rgba(91,141,239,.15); color:var(--brand); }
+  .asset-badge.forex{ background:rgba(245,185,66,.15); color:var(--hold); }
+
+  /* ── Bars ── */
+  .bar-row{ margin-bottom:10px; }
+  .bar-row:last-child{ margin-bottom:0; }
+  .bar-row .bar-label{ display:flex; justify-content:space-between; font-size:12px; margin-bottom:5px; font-family:var(--font-mono); }
+  .bar-track{ height:8px; border-radius:5px; background:var(--surface-2); overflow:hidden; }
+  .bar-fill{ height:100%; border-radius:5px; transition:width .4s ease; }
+  .div-track{ position:relative; height:8px; border-radius:5px; background:var(--surface-2); overflow:hidden; }
+  .div-track .mid{ position:absolute; left:50%; top:0; bottom:0; width:1px; background:var(--border); }
+  .div-fill{ position:absolute; top:0; bottom:0; border-radius:5px; }
+
+  /* ── Risk status ── */
+  .risk-status{ display:flex; align-items:center; gap:8px; padding:9px 11px; border-radius:9px; font-family:var(--font-mono); font-size:12.5px; margin-top:10px; }
+  .risk-status.ok{ background:rgba(46,217,147,.10); color:var(--buy); }
+  .risk-status.blocked{ background:rgba(255,92,114,.12); color:var(--sell); }
+
+  /* ── History ── */
+  .history-list{ display:flex; flex-direction:column; gap:6px; max-height:280px; overflow-y:auto; }
+  .history-row{ display:grid; grid-template-columns:52px 44px 1fr 60px 60px; gap:6px; align-items:center; font-family:var(--font-mono); font-size:12px; padding:6px 4px; border-bottom:1px solid var(--border); }
+  .history-row:last-child{ border-bottom:none; }
+  .tag{ font-weight:700; padding:2px 7px; border-radius:6px; font-size:11px; text-align:center; }
+  .tag.BUY{ background:rgba(46,217,147,.15); color:var(--buy); }
+  .tag.SELL{ background:rgba(255,92,114,.15); color:var(--sell); }
+  .tag.HOLD{ background:rgba(245,185,66,.15); color:var(--hold); }
+  .asset-type-pill{ font-size:10px; padding:2px 5px; border-radius:5px; text-align:center; }
+  .asset-type-pill.crypto{ background:rgba(91,141,239,.12); color:var(--brand); }
+  .asset-type-pill.forex{ background:rgba(245,185,66,.12); color:var(--hold); }
+  .outcome{ text-align:right; }
+  .outcome.pos{ color:var(--buy); }
+  .outcome.neg{ color:var(--sell); }
+  .outcome.pending{ color:var(--text-dim); }
+
+  .error-banner{ display:none; background:rgba(255,92,114,.12); color:var(--sell); border:1px solid rgba(255,92,114,.3); border-radius:10px; padding:10px 12px; font-family:var(--font-mono); font-size:12px; }
+  .footnote{ font-size:11px; color:var(--text-dim); line-height:1.5; padding:6px 4px 0; }
+
+  /* ── Pip display ── */
+  .pip-badge{ font-size:10px; color:var(--text-dim); margin-left:4px; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand"><span class="dot" id="liveDot"></span> MOE SCALPER</div>
+  <button id="installBtn">Install App</button>
+</header>
+
+<!-- ASSET TYPE TOGGLE -->
+<div class="type-row">
+  <button class="type-btn active" id="btnCrypto" onclick="switchType('crypto')">⬡ Crypto</button>
+  <button class="type-btn" id="btnForex" onclick="switchType('forex')">₿ Forex / FX</button>
+</div>
+
+<div class="controls-row">
+  <label class="field">Pair / Symbol
+    <select id="symbolSelect"></select>
+  </label>
+  <label class="field">Timeframe
+    <select id="intervalSelect"></select>
+  </label>
+  <label class="field">Lookback
+    <input type="number" id="lookbackInput" value="14" min="5" max="50" style="width:56px" />
+  </label>
+  <label class="field">Max daily loss ($)
+    <input type="number" id="maxLossInput" value="-300" style="width:70px" />
+  </label>
+  <label class="field" id="spreadField">Max spread
+    <input type="number" id="maxSpreadInput" value="0.05" step="0.01" style="width:60px" />
+    <span id="spreadUnit" style="font-size:10px;color:var(--text-dim)">%</span>
+  </label>
+</div>
+
+<main>
+  <div class="error-banner" id="errorBanner"></div>
+
+  <section class="hero" id="heroCard">
+    <div class="hero-top">
+      <span class="hero-label">Next candle signal <span class="asset-badge crypto" id="heroBadge">CRYPTO</span></span>
+      <span class="hero-countdown" id="countdown">--:--</span>
+    </div>
+    <div class="hero-signal" id="heroSignal">WAITING…</div>
+    <div class="hero-sub" id="heroSub">Connecting to live market data…</div>
+  </section>
+
+  <div class="grid">
+    <div class="card">
+      <h3>Current Closed Candle</h3>
+      <div class="metric-grid" id="candleMetrics">
+        <div class="metric"><span class="k">OPEN</span><span class="v" id="mOpen">--</span></div>
+        <div class="metric"><span class="k">HIGH</span><span class="v" id="mHigh">--</span></div>
+        <div class="metric"><span class="k">LOW</span><span class="v" id="mLow">--</span></div>
+        <div class="metric"><span class="k">CLOSE</span><span class="v" id="mClose">--</span></div>
+        <div class="metric"><span class="k">ATR(14)</span><span class="v" id="mATR">--</span></div>
+        <div class="metric"><span class="k">ADX(14)</span><span class="v" id="mADX">--</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Gating Network — Expert Weights</h3>
+      <div class="bar-row">
+        <div class="bar-label"><span>Trend</span><span id="wTrendTxt">0%</span></div>
+        <div class="bar-track"><div class="bar-fill" id="wTrendBar" style="width:0%;background:var(--brand)"></div></div>
+      </div>
+      <div class="bar-row">
+        <div class="bar-label"><span>Range</span><span id="wRangeTxt">0%</span></div>
+        <div class="bar-track"><div class="bar-fill" id="wRangeBar" style="width:0%;background:var(--brand)"></div></div>
+      </div>
+      <div class="bar-row">
+        <div class="bar-label"><span>Volatility</span><span id="wVolTxt">0%</span></div>
+        <div class="bar-track"><div class="bar-fill" id="wVolBar" style="width:0%;background:var(--brand)"></div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Expert Opinions (−1 Sell ↔ +1 Buy)</h3>
+      <div class="bar-row">
+        <div class="bar-label"><span>Trend</span><span id="eTrendTxt">0.00</span></div>
+        <div class="div-track"><div class="mid"></div><div class="div-fill" id="eTrendBar"></div></div>
+      </div>
+      <div class="bar-row">
+        <div class="bar-label"><span>Range</span><span id="eRangeTxt">0.00</span></div>
+        <div class="div-track"><div class="mid"></div><div class="div-fill" id="eRangeBar"></div></div>
+      </div>
+      <div class="bar-row">
+        <div class="bar-label"><span>Volatility</span><span id="eVolTxt">0.00</span></div>
+        <div class="div-track"><div class="mid"></div><div class="div-fill" id="eVolBar"></div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Risk Layer — Paper Ledger</h3>
+      <div class="metric-grid">
+        <div class="metric"><span class="k">DAILY PNL</span><span class="v" id="dailyPnlTxt">$0.00</span></div>
+        <div class="metric"><span class="k">SPREAD</span><span class="v" id="spreadTxt">--</span></div>
+        <div class="metric"><span class="k">FUSED SIG</span><span class="v" id="fusedTxt">--</span></div>
+      </div>
+      <div class="risk-status ok" id="riskStatus">OK — signal passing through</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Prediction History</h3>
+    <div class="history-list" id="historyList">
+      <div class="footnote">No closed predictions yet — waiting for the first candle close.</div>
+    </div>
+  </div>
+
+  <p class="footnote">
+    Crypto: Binance public API (no key needed). Forex: Yahoo Finance chart API (no key needed).
+    Spread for forex is estimated from ATR — wire a real broker API for live bid/ask. Paper PnL uses real subsequent candle closes. Not financial advice.
+  </p>
+</main>
+
+<script>
+/* ================================================================
+   ASSET CONFIG
+   Two asset classes, two data sources, one unified MoE engine.
+================================================================= */
+const ASSETS = {
+  crypto: {
+    label: 'CRYPTO',
+    symbols: [
+      { v:'BTCUSDT', l:'BTC / USDT' },
+      { v:'ETHUSDT', l:'ETH / USDT' },
+      { v:'SOLUSDT', l:'SOL / USDT' },
+      { v:'BNBUSDT', l:'BNB / USDT' },
+      { v:'XRPUSDT', l:'XRP / USDT' },
+      { v:'DOGEUSDT',l:'DOGE / USDT'},
+      { v:'ADAUSDT', l:'ADA / USDT' },
+      { v:'AVAXUSDT',l:'AVAX / USDT'},
+    ],
+    intervals: [
+      { v:'1m', l:'1 min' },{ v:'3m', l:'3 min' },{ v:'5m', l:'5 min' },
+      { v:'15m',l:'15 min'},{ v:'1h', l:'1 hour'},
+    ],
+    defaultInterval: '5m',
+    defaultSpread: 0.05,
+    spreadLabel: '%',
+    spreadHelp: '% of price',
+    priceDp(p){ return p >= 100 ? 2 : p >= 1 ? 4 : 6; },
+    spreadDisplay(s){ return `${s.toFixed(3)}%`; },
+  },
+  forex: {
+    label: 'FOREX',
+    symbols: [
+      { v:'EURUSD=X', l:'EUR / USD' },
+      { v:'GBPUSD=X', l:'GBP / USD' },
+      { v:'USDJPY=X', l:'USD / JPY' },
+      { v:'AUDUSD=X', l:'AUD / USD' },
+      { v:'USDCAD=X', l:'USD / CAD' },
+      { v:'USDCHF=X', l:'USD / CHF' },
+      { v:'NZDUSD=X', l:'NZD / USD' },
+      { v:'EURGBP=X', l:'EUR / GBP' },
+      { v:'EURJPY=X', l:'EUR / JPY' },
+      { v:'GBPJPY=X', l:'GBP / JPY' },
+    ],
+    intervals: [
+      { v:'1m',  l:'1 min' },{ v:'5m',  l:'5 min' },
+      { v:'15m', l:'15 min'},{ v:'30m', l:'30 min'},{ v:'60m', l:'1 hour'},
+    ],
+    defaultInterval: '5m',
+    defaultSpread: 3,
+    spreadLabel: 'pips',
+    spreadHelp: 'pips',
+    priceDp(p){ return p >= 50 ? 2 : 5; },  // JPY pairs 2dp, others 5dp
+    spreadDisplay(s){ return `${s.toFixed(1)} pips`; },
+  },
+};
+
+/* ================================================================
+   INDICATOR MATH — Wilder ATR + ADX (same for both asset types)
+================================================================= */
+function computeATR(cs, period=14) {
+  const tr = cs.map((c,i) => {
+    if(i===0) return c.high-c.low;
+    const pc=cs[i-1].close;
+    return Math.max(c.high-c.low, Math.abs(c.high-pc), Math.abs(c.low-pc));
+  });
+  const out=new Array(tr.length).fill(null);
+  if(tr.length>=period){
+    let s=0; for(let i=0;i<period;i++) s+=tr[i]; out[period-1]=s/period;
+    for(let i=period;i<tr.length;i++) out[i]=(out[i-1]*(period-1)+tr[i])/period;
+  }
+  return out;
+}
+
+function computeADX(cs, period=14) {
+  const n=cs.length, pDM=new Array(n).fill(0), mDM=new Array(n).fill(0), tr=new Array(n).fill(0);
+  for(let i=1;i<n;i++){
+    const u=cs[i].high-cs[i-1].high, d=cs[i-1].low-cs[i].low;
+    pDM[i]=(u>d&&u>0)?u:0; mDM[i]=(d>u&&d>0)?d:0;
+    tr[i]=Math.max(cs[i].high-cs[i].low,Math.abs(cs[i].high-cs[i-1].close),Math.abs(cs[i].low-cs[i-1].close));
+  }
+  function ws(arr){
+    const o=new Array(arr.length).fill(null); let s=0;
+    for(let i=1;i<=period&&i<arr.length;i++) s+=arr[i];
+    if(arr.length>period){ o[period]=s; for(let i=period+1;i<arr.length;i++) o[i]=o[i-1]-o[i-1]/period+arr[i]; }
+    return o;
+  }
+  const trS=ws(tr),pS=ws(pDM),mS=ws(mDM);
+  const dx=new Array(n).fill(null);
+  for(let i=0;i<n;i++) if(trS[i]){const p=100*pS[i]/trS[i],m=100*mS[i]/trS[i];dx[i]=(p+m===0)?0:(100*Math.abs(p-m))/(p+m);}
+  const adx=new Array(n).fill(null);
+  const fi=dx.findIndex(v=>v!==null);
+  if(fi>=0&&fi+period<=n){
+    let s=0,c=0; for(let i=fi;i<fi+period;i++) if(dx[i]!==null){s+=dx[i];c++;}
+    adx[fi+period-1]=c?s/c:0;
+    for(let i=fi+period;i<n;i++) adx[i]=(adx[i-1]*(period-1)+(dx[i]||0))/period;
+  }
+  return adx;
+}
+
+function attachIndicators(cs, period=14) {
+  const atr=computeATR(cs,period), adx=computeADX(cs,period);
+  return cs.map((c,i)=>({...c, atr:atr[i]??0, adx:adx[i]??0}));
+}
+
+/* ================================================================
+   FOREX SPREAD ESTIMATE
+   Without a real broker feed we estimate spread from ATR.
+   Typical forex spread ≈ 5–15% of ATR14. This is displayed for
+   the user and fed to the risk layer as pip value.
+================================================================= */
+function estimateForexSpread(candle, symbol) {
+  // JPY pairs: pip = 0.01; all others: pip = 0.0001
+  const pipSize = symbol.includes('JPY') ? 0.01 : 0.0001;
+  // Typical raw spread ~0.5–1.5 pips for majors; simulate from ATR
+  const atrPips = (candle.atr || 0) / pipSize;
+  // Estimate: ~3% of ATR (conservative)
+  return Math.max(0.5, atrPips * 0.03);
+}
+
+/* ================================================================
+   MoE ENGINE (same for both asset types — prices are just numbers)
+================================================================= */
+const clip = x => Math.max(-1, Math.min(1, x));
+
+class GatingNetwork {
+  static softmax(l){ const m=Math.max(...l),e=l.map(x=>Math.exp(x-m)),s=e.reduce((a,b)=>a+b,0); return e.map(x=>x/s); }
+  route(cur, atrAvg) {
+    const atrR = atrAvg>0 ? cur.atr/atrAvg : 1;
+    const [wT,wR,wV] = GatingNetwork.softmax([(cur.adx-25)/10, (25-cur.adx)/10, (atrR-1.3)*3]);
+    return { TrendExpert:wT, RangeExpert:wR, VolatilityExpert:wV };
+  }
+}
+
+const TrendExpert = {
+  predict(win) {
+    if(win.length<3) return 0;
+    const c=win.map(x=>x.close), sl=(c[c.length-1]-c[0])/c[0];
+    const last=win[win.length-1], rng=last.high-last.low;
+    const br=rng>0?(last.close-last.open)/rng:0;
+    return clip(sl*50+br*0.5);
+  }
+};
+
+const RangeExpert = {
+  predict(win) {
+    if(win.length<5) return 0;
+    const c=win.map(x=>x.close), mean=c.reduce((a,b)=>a+b,0)/c.length;
+    const std=Math.sqrt(c.reduce((a,b)=>a+(b-mean)**2,0)/c.length);
+    return std===0?0:clip(-(c[c.length-1]-mean)/std*0.5);
+  }
+};
+
+const VolatilityExpert = {
+  predict(win) {
+    if(win.length<5) return 0;
+    const last=win[win.length-1], ranges=win.map(c=>c.high-c.low);
+    const pr=ranges.slice(0,-1), avgR=pr.reduce((a,b)=>a+b,0)/pr.length;
+    const curR=ranges[ranges.length-1];
+    if(!avgR||!curR) return 0;
+    const ef=Math.min(Math.max(0,curR/avgR-1),1);
+    const bias=((last.close-last.low)/curR-0.5)*2;
+    return clip(bias*ef);
+  }
+};
+
+class SignalFusion {
+  fuse(w, s){ return clip(Object.keys(w).reduce((a,k)=>a+w[k]*s[k],0)); }
+}
+
+class RiskLayer {
+  constructor(maxLoss=-300, maxSpread=0.05){ this.maxLoss=maxLoss; this.maxSpread=maxSpread; }
+  apply(sig, pnl, spread) {
+    if(pnl<=this.maxLoss) return {signal:0, reason:`BLOCKED — daily loss limit ($${pnl.toFixed(2)} ≤ $${this.maxLoss.toFixed(2)})`};
+    if(spread>=this.maxSpread) return {signal:0, reason:`BLOCKED — spread too wide (${spread.toFixed(3)} ≥ ${this.maxSpread.toFixed(3)})`};
+    return {signal:sig, reason:'OK — signal passing through'};
+  }
+}
+
+function signalToLabel(s){ return s>=0.15?'BUY':s<=-0.15?'SELL':'HOLD'; }
+
+class MoESystem {
+  constructor(lookback=14, risk=null){ this.lookback=lookback; this.gate=new GatingNetwork(); this.fusion=new SignalFusion(); this.risk=risk||new RiskLayer(); }
+  predict(candles, idx, pnl, spread) {
+    const cur=candles[idx], start=Math.max(0,idx-this.lookback+1);
+    const win=candles.slice(start,idx+1);
+    const atrAvg=win.reduce((a,c)=>a+c.atr,0)/win.length;
+    const weights=this.gate.route(cur,atrAvg);
+    const es={TrendExpert:TrendExpert.predict(win),RangeExpert:RangeExpert.predict(win),VolatilityExpert:VolatilityExpert.predict(win)};
+    const fused=this.fusion.fuse(weights,es);
+    const {signal:final,reason}=this.risk.apply(fused,pnl,spread);
+    return {idx,current:cur,weights,expertSignals:es,fused,final,label:signalToLabel(final),riskReason:reason};
+  }
+}
+
+/* ================================================================
+   DATA FETCHERS
+   ── Binance  → Crypto OHLCV (closed candles only, last entry is live)
+   ── Yahoo Finance → Forex/FX OHLCV
+================================================================= */
+
+// Binance public REST — no key needed, CORS open
+async function fetchBinance(symbol, interval, limit=100) {
+  const r = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`);
+  if(!r.ok) throw new Error(`Binance ${r.status}`);
+  const raw = await r.json();
+  return raw.map(k=>({
+    openTime:k[0], open:+k[1], high:+k[2], low:+k[3], close:+k[4],
+    volume:+k[5], closeTime:k[6],
+  }));
+}
+
+async function fetchBinanceSpread(symbol) {
+  const r = await fetch(`https://api.binance.com/api/v3/ticker/bookTicker?symbol=${symbol}`);
+  if(!r.ok) return null;
+  const d = await r.json();
+  const bid=+d.bidPrice, ask=+d.askPrice, mid=(bid+ask)/2;
+  return mid>0 ? ((ask-bid)/mid)*100 : 0;
+}
+
+// Yahoo Finance chart API — no key needed, CORS allowed
+// interval format: 1m 2m 5m 15m 30m 60m 1d
+// range: 1d 5d 1mo
+const YF_RANGE = {'1m':'1d','5m':'5d','15m':'5d','30m':'5d','60m':'1mo'};
+async function fetchYahoo(symbol, interval, limit=100) {
+  const range = YF_RANGE[interval] || '5d';
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=${interval}&range=${range}`;
+  const r = await fetch(url);
+  if(!r.ok) throw new Error(`Yahoo ${r.status}`);
+  const json = await r.json();
+  const res = json?.chart?.result?.[0];
+  if(!res) throw new Error('Yahoo: no data');
+  const ts = res.timestamp || [];
+  const q = res.indicators.quote[0];
+  const candles = [];
+  for(let i=0; i<ts.length; i++){
+    if(q.open[i]==null||q.close[i]==null) continue;
+    candles.push({
+      openTime: ts[i]*1000,
+      open:  q.open[i],  high: q.high[i],
+      low:   q.low[i],   close:q.close[i],
+      volume:q.volume[i]||0,
+      closeTime: (ts[i]+intervalToSeconds(interval))*1000,
+    });
+  }
+  return candles.slice(-limit);
+}
+
+function intervalToSeconds(iv){
+  const map={'1m':60,'3m':180,'5m':300,'15m':900,'30m':1800,'60m':3600,'1h':3600};
+  return map[iv]||300;
+}
+
+/* ================================================================
+   APPLICATION STATE
+================================================================= */
+const state = {
+  assetType: 'crypto',
+  candles: [],
+  lastProcessedOpenTime: null,
+  dailyPnl: 0,
+  dailyResetDate: null,
+  pendingPrediction: null,
+  history: [],
+  positionSize: 1000,
+  nextCloseAt: null,
+};
+
+const SIGNAL_COLORS = {BUY:'var(--buy)',SELL:'var(--sell)',HOLD:'var(--hold)'};
+const fmt = (n,d=2) => Number.isFinite(n)?n.toFixed(d):'--';
+
+// DOM refs
+const $ = id => document.getElementById(id);
+
+function maybeResetDaily(){
+  const today=new Date().toISOString().slice(0,10);
+  if(state.dailyResetDate!==today){ state.dailyResetDate=today; state.dailyPnl=0; }
+}
+
+function setStatus(ok,msg){
+  $('liveDot').className='dot '+(ok?'live':'down');
+  $('errorBanner').style.display=ok?'none':'block';
+  if(!ok) $('errorBanner').textContent=`Connection issue: ${msg}. Retrying…`;
+}
+
+/* ── UI population ── */
+function switchType(type){
+  state.assetType = type;
+  state.lastProcessedOpenTime = null;
+  state.pendingPrediction = null;
+
+  const cfg = ASSETS[type];
+  $('btnCrypto').classList.toggle('active', type==='crypto');
+  $('btnForex').classList.toggle('active', type==='forex');
+
+  // Rebuild symbol dropdown
+  const ss = $('symbolSelect');
+  ss.innerHTML = cfg.symbols.map(s=>`<option value="${s.v}">${s.l}</option>`).join('');
+
+  // Rebuild interval dropdown
+  const is = $('intervalSelect');
+  is.innerHTML = cfg.intervals.map(i=>`<option value="${i.v}"${i.v===cfg.defaultInterval?' selected':''}>${i.l}</option>`).join('');
+
+  // Update spread label
+  $('maxSpreadInput').value = cfg.defaultSpread;
+  $('spreadUnit').textContent = cfg.spreadLabel;
+
+  // Update hero badge
+  const badge = $('heroBadge');
+  badge.textContent = cfg.label;
+  badge.className = `asset-badge ${type}`;
+
+  $('heroSignal').textContent = 'SWITCHING…';
+  $('heroSub').textContent = 'Loading ' + cfg.label + ' data…';
+}
+
+function populateInitial(){
+  switchType('crypto'); // sets up dropdowns for crypto on load
+}
+
+/* ── Render functions ── */
+function renderWeights(w){
+  $('wTrendTxt').textContent=`${(w.TrendExpert*100).toFixed(0)}%`;
+  $('wRangeTxt').textContent=`${(w.RangeExpert*100).toFixed(0)}%`;
+  $('wVolTxt').textContent=`${(w.VolatilityExpert*100).toFixed(0)}%`;
+  $('wTrendBar').style.width=`${w.TrendExpert*100}%`;
+  $('wRangeBar').style.width=`${w.RangeExpert*100}%`;
+  $('wVolBar').style.width=`${w.VolatilityExpert*100}%`;
+}
+
+function renderDivBar(id, val) {
+  const el=$(id), pct=Math.abs(val)*50;
+  el.style.background = val>=0?'var(--buy)':'var(--sell)';
+  if(val>=0){ el.style.left='50%'; el.style.width=`${pct}%`; }
+  else{ el.style.left=`${50-pct}%`; el.style.width=`${pct}%`; }
+}
+
+function renderExperts(sig){
+  $('eTrendTxt').textContent=fmt(sig.TrendExpert);
+  $('eRangeTxt').textContent=fmt(sig.RangeExpert);
+  $('eVolTxt').textContent=fmt(sig.VolatilityExpert);
+  renderDivBar('eTrendBar',sig.TrendExpert);
+  renderDivBar('eRangeBar',sig.RangeExpert);
+  renderDivBar('eVolBar',sig.VolatilityExpert);
+}
+
+function renderCandle(c, sym){
+  const dp = ASSETS[state.assetType].priceDp(c.close);
+  $('mOpen').textContent=fmt(c.open,dp);
+  $('mHigh').textContent=fmt(c.high,dp);
+  $('mLow').textContent=fmt(c.low,dp);
+  $('mClose').textContent=fmt(c.close,dp);
+  $('mATR').textContent=fmt(c.atr,dp);
+  $('mADX').textContent=fmt(c.adx,2);
+}
+
+function renderHero(result, candle, sym){
+  const color=SIGNAL_COLORS[result.label];
+  $('heroCard').style.setProperty('--sig-color',color);
+  $('heroSignal').textContent=result.label;
+  $('heroSignal').style.color=color;
+  const dp=ASSETS[state.assetType].priceDp(candle.close);
+  $('heroSub').innerHTML=`Closed at <b>${fmt(candle.close,dp)}</b> · score <b>${fmt(result.final,3)}</b> · ${sym.replace('=X','')} ${$('intervalSelect').value}`;
+}
+
+function renderRisk(result, spreadRaw){
+  const cfg=ASSETS[state.assetType];
+  $('dailyPnlTxt').textContent=`$${fmt(state.dailyPnl)}`;
+  $('dailyPnlTxt').style.color=state.dailyPnl<0?'var(--sell)':'var(--text)';
+  $('spreadTxt').textContent=cfg.spreadDisplay(spreadRaw);
+  $('fusedTxt').textContent=fmt(result.fused,3);
+  const blocked=result.riskReason.startsWith('BLOCKED');
+  $('riskStatus').className='risk-status '+(blocked?'blocked':'ok');
+  $('riskStatus').textContent=result.riskReason;
+}
+
+function renderHistory(){
+  const list=$('historyList');
+  if(!state.history.length){
+    list.innerHTML='<div class="footnote">No closed predictions yet — waiting for the first candle close.</div>';
+    return;
+  }
+  list.innerHTML=state.history.map(h=>`
+    <div class="history-row">
+      <span>${h.time}</span>
+      <span class="tag ${h.label}">${h.label}</span>
+      <span class="asset-type-pill ${h.assetType}">${h.assetType==='forex'?'FX':'CR'}</span>
+      <span>${h.closeStr}</span>
+      <span class="outcome ${h.outcomeClass}">${h.outcomeTxt}</span>
+    </div>
+  `).join('');
+}
+
+function logHistory(result, candle, sym){
+  const dp=ASSETS[state.assetType].priceDp(candle.close);
+  state.history.unshift({
+    time: new Date(candle.closeTime).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),
+    label: result.label,
+    assetType: state.assetType,
+    closeStr: fmt(candle.close,dp),
+    outcomeTxt:'pending', outcomeClass:'pending',
+  });
+  state.history=state.history.slice(0,30);
+  renderHistory();
+}
+
+function markOutcome(pnl){
+  if(!state.history.length) return;
+  const h=state.history[0];
+  h.outcomeTxt=(pnl>=0?'+':'')+fmt(pnl);
+  h.outcomeClass=pnl>0?'pos':pnl<0?'neg':'pending';
+  renderHistory();
+}
+
+/* ── Countdown ── */
+function updateCountdown(){
+  if(!state.nextCloseAt) return;
+  const rem=Math.max(0,state.nextCloseAt-Date.now());
+  const m=Math.floor(rem/60000), s=Math.floor((rem%60000)/1000);
+  $('countdown').textContent=`closes in ${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+setInterval(updateCountdown,1000);
+
+/* ================================================================
+   MAIN POLL LOOP
+================================================================= */
+const moe = new MoESystem();
+
+async function refreshCycle(){
+  const type=state.assetType;
+  const symbol=$('symbolSelect').value;
+  const interval=$('intervalSelect').value;
+  const lookback=parseInt($('lookbackInput').value)||14;
+  const maxLoss=parseFloat($('maxLossInput').value)||-300;
+  const maxSpread=parseFloat($('maxSpreadInput').value)||0.05;
+
+  try {
+    let rawCandles, spreadRaw;
+
+    if(type==='crypto'){
+      const [klines, book] = await Promise.all([
+        fetchBinance(symbol, interval, 120),
+        fetchBinanceSpread(symbol),
+      ]);
+      rawCandles = klines;
+      spreadRaw = book ?? 0;
+    } else {
+      rawCandles = await fetchYahoo(symbol, interval, 120);
+      // Estimate spread from last closed candle's ATR after enrichment
+      spreadRaw = null; // computed after enrichment below
+    }
+
+    setStatus(true);
+
+    const enriched = attachIndicators(rawCandles, 14);
+    state.candles = enriched;
+
+    // Last entry = still-forming candle (both Binance and Yahoo return it)
+    // Second-to-last = the most recently CLOSED candle
+    const idx = enriched.length - 2;
+    if(idx < 14) { $('heroSub').textContent='Loading more history…'; return; }
+
+    const lastClosed = enriched[idx];
+    const forming = enriched[enriched.length-1];
+
+    // Compute forex spread estimate now that we have ATR
+    if(type==='forex') spreadRaw = estimateForexSpread(lastClosed, symbol);
+
+    // Next candle close time
+    state.nextCloseAt = forming.openTime + intervalToSeconds(interval)*1000;
+
+    maybeResetDaily();
+
+    moe.lookback = lookback;
+    moe.risk = new RiskLayer(maxLoss, maxSpread);
+
+    if(state.lastProcessedOpenTime !== lastClosed.openTime){
+      // NEW closed candle — settle previous prediction against real move
+      if(state.pendingPrediction){
+        const {result, closeAtPrediction} = state.pendingPrediction;
+        const move = (lastClosed.close - closeAtPrediction) / closeAtPrediction;
+        let pnl = 0;
+        if(result.label==='BUY')  pnl =  move * state.positionSize;
+        if(result.label==='SELL') pnl = -move * state.positionSize;
+        state.dailyPnl += pnl;
+        markOutcome(pnl);
+      }
+
+      // Run MoE pipeline on the newly closed candle
+      const result = moe.predict(enriched, idx, state.dailyPnl, spreadRaw);
+
+      renderHero(result, lastClosed, symbol);
+      renderCandle(lastClosed, symbol);
+      renderWeights(result.weights);
+      renderExperts(result.expertSignals);
+      renderRisk(result, spreadRaw);
+      logHistory(result, lastClosed, symbol);
+
+      state.pendingPrediction = {result, closeAtPrediction: lastClosed.close};
+      state.lastProcessedOpenTime = lastClosed.openTime;
+    } else {
+      // Same candle still forming — refresh spread/PnL display only
+      const cfg=ASSETS[type];
+      $('spreadTxt').textContent=cfg.spreadDisplay(spreadRaw);
+      $('dailyPnlTxt').textContent=`$${fmt(state.dailyPnl)}`;
+    }
+  } catch(err) {
+    setStatus(false, err.message);
+  }
+}
+
+// Symbol/interval/type change => reset and re-fetch immediately
+['symbolSelect','intervalSelect'].forEach(id => {
+  $(id).addEventListener('change', () => {
+    state.lastProcessedOpenTime = null;
+    state.pendingPrediction = null;
+    $('heroSignal').textContent = 'LOADING…';
+    refreshCycle();
+  });
+});
+
+/* ================================================================
+   PWA — Install prompt + Service Worker
+================================================================= */
+let deferred = null;
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault(); deferred=e;
+  $('installBtn').style.display='inline-block';
+});
+$('installBtn').addEventListener('click', async () => {
+  if(!deferred) return;
+  deferred.prompt();
+  await deferred.userChoice;
+  deferred=null;
+  $('installBtn').style.display='none';
+});
+if('serviceWorker' in navigator)
+  window.addEventListener('load', ()=>navigator.serviceWorker.register('service-worker.js').catch(()=>{}));
+
+/* ── BOOT ── */
+populateInitial();
+refreshCycle();
+setInterval(refreshCycle, 6000);
+</script>
+</body>
+</html>
